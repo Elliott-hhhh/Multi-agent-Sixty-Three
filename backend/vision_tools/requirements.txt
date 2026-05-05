@@ -1,0 +1,15 @@
+# vision_tools 依赖
+# 核心依赖
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-openai>=0.2.0
+opencv-python>=4.8.0
+numpy>=1.24.0
+Pillow>=10.0.0
+
+# OCR 依赖（二选一，推荐 paddleocr）
+paddleocr>=2.7.0
+paddlepaddle>=2.5.0
+
+# 可选：如果用 Tesseract 替代 PaddleOCR
+# pytesseract>=0.3.10

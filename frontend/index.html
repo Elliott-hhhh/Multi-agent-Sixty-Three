@@ -1,0 +1,927 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Sixty-Three - 多Agent智能助手</title>
+        <link rel="stylesheet" href="style.css">
+        <script src="https://cdn.jsdelivr.net/npm/marked@14.0.0/marked.min.js"></script>
+    </head>
+<body>
+    <div class="app-layout">
+        <!-- Left Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <span style="font-size:20px;">🧠</span>
+                <h2>Sixty-Three</h2>
+            </div>
+            <div class="sidebar-actions">
+                <button class="new-chat-btn" onclick="newChat()">+ 新建对话</button>
+            </div>
+            <div class="sidebar-tabs">
+                <button class="sidebar-tab active" data-tab="flow" onclick="switchTab('flow')">执行流程</button>
+                <button class="sidebar-tab" data-tab="history" onclick="switchTab('history')">对话记录</button>
+            </div>
+            <div class="sidebar-content" id="sidebarContent">
+                <!-- Execution Flow Tab -->
+                <div id="flowTab" class="exec-flow">
+                    <div style="text-align:center;color:var(--text-secondary);padding:40px 0;font-size:13px;">
+                        发送消息后查看执行流程
+                    </div>
+                </div>
+                <!-- History Tab -->
+                <div id="historyTab" style="display:none;">
+                    <div class="history-empty-hint" style="text-align:center;color:var(--text-secondary);padding:40px 0;font-size:13px;">
+                        暂无对话记录
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Agent Flow Visualization -->
+            <div class="agent-flow" id="agentFlow">
+                <div class="agent-node supervisor" id="node-supervisor">
+                    <span class="agent-node-icon">🧠</span>
+                    <span class="agent-node-label">Supervisor</span>
+                </div>
+                <span class="flow-arrow" id="arrow-1">→</span>
+                <div class="agent-node knowledge" id="node-knowledge">
+                    <span class="agent-node-icon">📚</span>
+                    <span class="agent-node-label">Knowledge</span>
+                </div>
+                <div class="agent-node reminder" id="node-reminder">
+                    <span class="agent-node-icon">⏰</span>
+                    <span class="agent-node-label">Reminder</span>
+                </div>
+                <div class="agent-node cityinfo" id="node-cityinfo">
+                    <span class="agent-node-icon">🌤</span>
+                    <span class="agent-node-label">CityInfo</span>
+                </div>
+                <div class="agent-node download" id="node-download">
+                    <span class="agent-node-icon">⬇️</span>
+                    <span class="agent-node-label">Download</span>
+                </div>
+                <div class="agent-node vision" id="node-vision">
+                    <span class="agent-node-icon">📷</span>
+                    <span class="agent-node-label">Vision</span>
+                </div>
+                <div class="agent-node coding" id="node-coding">
+                    <span class="agent-node-icon">💻</span>
+                    <span class="agent-node-label">Coding</span>
+                </div>
+                <div class="agent-node chat" id="node-chat">
+                    <span class="agent-node-icon">💬</span>
+                    <span class="agent-node-label">Chat</span>
+                </div>
+            </div>
+
+            <!-- Chat Area -->
+            <div class="chat-area">
+                <div class="chat-messages" id="chatMessages">
+                    <div class="welcome-screen" id="welcomeScreen">
+                        <div class="welcome-icon">🤖</div>
+                        <div class="welcome-title">Sixty-Three</div>
+                        <div class="welcome-subtitle">多Agent智能助手，支持知识检索、联网搜索、提醒管理、城市信息查询</div>
+                        <div class="welcome-examples">
+                            <button class="example-btn" onclick="sendExample('北京今天天气怎么样？')">🌤 天气查询</button>
+                            <button class="example-btn" onclick="sendExample('iphone17 promax 1TB 价格')">📱 价格查询</button>
+                            <button class="example-btn" onclick="sendExample('明天下午3点提醒我开会')">⏰ 设置提醒</button>
+                            <button class="example-btn" onclick="sendExample('你好，你是谁？')">💬 闲聊</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="chat-input-area">
+                    <div class="chat-input-wrapper">
+                        <textarea class="chat-input" id="chatInput" placeholder="输入消息..." rows="1" onkeydown="handleKeyDown(event)"></textarea>
+                    </div>
+                    <button class="send-btn" id="sendBtn" onclick="sendMessage()">➤</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let isProcessing = false;
+        let currentSessionId = 'session_' + Date.now();
+        const MAX_HISTORY_SESSIONS = 50;
+        let currentFlowSteps = [];
+        let currentSessionMessages = [];
+        let pendingCommandConfirm = null;
+
+        // 初始化加载历史记录
+        function initHistory() {
+            loadHistoryFromBackend();
+        }
+
+        async function loadHistoryFromBackend() {
+            try {
+                const resp = await fetch('/api/history?user_id=web_user');
+                if (!resp.ok) {
+                    loadHistoryFromStorage();
+                    return;
+                }
+                const data = await resp.json();
+                const historyTab = document.getElementById('historyTab');
+                historyTab.innerHTML = '';
+
+                if (!data.sessions || data.sessions.length === 0) {
+                    historyTab.innerHTML = '<div class="history-empty-hint" style="text-align:center;color:var(--text-secondary);padding:40px 0;font-size:13px;">暂无对话记录</div>';
+                    return;
+                }
+
+                data.sessions.forEach(session => {
+                    addBackendSessionHistoryItem(session);
+                });
+            } catch (error) {
+                console.error('从后端加载历史记录失败:', error);
+                loadHistoryFromStorage();
+            }
+        }
+
+        function addBackendSessionHistoryItem(session) {
+            const historyTab = document.getElementById('historyTab');
+            const emptyHint = historyTab.querySelector('.history-empty-hint');
+            if (emptyHint) emptyHint.remove();
+
+            const title = session.title || '空对话';
+            const roundCount = session.roundCount || 0;
+            const msgCount = session.messageCount || 0;
+
+            const item = document.createElement('div');
+            item.className = 'conv-item';
+            item.dataset.sessionId = session.sessionId;
+            item.innerHTML = `
+                <div class="conv-item-content">
+                    <div class="conv-item-question">👤 ${title}</div>
+                    <div class="conv-item-path" style="font-size:11px;color:var(--text-secondary);">${roundCount} 轮对话 · ${msgCount} 条消息</div>
+                </div>
+                <button class="conv-item-delete" onclick="deleteHistoryItem(event, this, '${session.sessionId}')">🗑️</button>
+            `;
+            item.querySelector('.conv-item-content').addEventListener('click', function() {
+                loadSessionConversationFromBackend(session.sessionId);
+            });
+            historyTab.appendChild(item);
+        }
+
+        async function loadSessionConversationFromBackend(sessionId) {
+            try {
+                const resp = await fetch(`/api/history/${sessionId}?user_id=web_user`);
+                if (!resp.ok) return;
+                const data = await resp.json();
+                if (!data.session) return;
+
+                const chatMessages = document.getElementById('chatMessages');
+                chatMessages.innerHTML = '';
+                hideWelcome();
+
+                currentSessionId = sessionId;
+                currentSessionMessages = [];
+
+                const messages = data.session.messages || [];
+                let pendingQuestion = null;
+
+                messages.forEach(msg => {
+                    if (msg.type === 'human') {
+                        if (pendingQuestion) {
+                            currentSessionMessages.push({
+                                question: pendingQuestion,
+                                answer: '',
+                                agentPath: '',
+                                timestamp: ''
+                            });
+                        }
+                        addMessage('user', msg.content);
+                        pendingQuestion = msg.content;
+                    } else if (msg.type === 'ai') {
+                        addMessage('assistant', msg.content);
+                        if (pendingQuestion) {
+                            currentSessionMessages.push({
+                                question: pendingQuestion,
+                                answer: msg.content,
+                                agentPath: msg.agent_tool_path || '',
+                                timestamp: msg.timestamp || ''
+                            });
+                            pendingQuestion = null;
+                        } else {
+                            currentSessionMessages.push({
+                                question: '',
+                                answer: msg.content,
+                                agentPath: msg.agent_tool_path || '',
+                                timestamp: msg.timestamp || ''
+                            });
+                        }
+                    }
+                });
+
+                if (pendingQuestion) {
+                    currentSessionMessages.push({
+                        question: pendingQuestion,
+                        answer: '',
+                        agentPath: '',
+                        timestamp: ''
+                    });
+                }
+
+                resetAgentFlow();
+                document.getElementById('flowTab').innerHTML = '<div style="text-align:center;color:var(--text-secondary);padding:40px 0;font-size:13px;">执行流程仅在当前会话中显示</div>';
+
+                document.querySelectorAll('.conv-item').forEach(el => el.classList.remove('active'));
+                const activeItem = document.querySelector(`.conv-item[data-session-id="${sessionId}"]`);
+                if (activeItem) activeItem.classList.add('active');
+            } catch (error) {
+                console.error('加载会话详情失败:', error);
+            }
+        }
+
+        // 从本地存储加载历史记录
+        function loadHistoryFromStorage() {
+            try {
+                const sessionsJson = localStorage.getItem('sixty_three_sessions');
+                if (sessionsJson) {
+                    const sessions = JSON.parse(sessionsJson);
+                    const historyTab = document.getElementById('historyTab');
+                    historyTab.innerHTML = '';
+                    
+                    sessions.forEach(session => {
+                        addSessionHistoryItem(session);
+                    });
+                    
+                    if (sessions.length === 0) {
+                        historyTab.innerHTML = '<div class="history-empty-hint" style="text-align:center;color:var(--text-secondary);padding:40px 0;font-size:13px;">暂无对话记录</div>';
+                    }
+                }
+            } catch (error) {
+                console.error('加载历史记录失败:', error);
+            }
+        }
+
+        // 保存所有 session 到本地存储
+        function saveSessionsToStorage() {
+            try {
+                const sessionsJson = localStorage.getItem('sixty_three_sessions');
+                let sessions = sessionsJson ? JSON.parse(sessionsJson) : [];
+                
+                const existingIndex = sessions.findIndex(s => s.sessionId === currentSessionId);
+                const sessionData = {
+                    sessionId: currentSessionId,
+                    messages: currentSessionMessages,
+                    flowSteps: currentFlowSteps,
+                    updatedAt: new Date().toISOString()
+                };
+                
+                if (existingIndex !== -1) {
+                    sessions[existingIndex] = sessionData;
+                } else {
+                    sessions.unshift(sessionData);
+                }
+                
+                if (sessions.length > MAX_HISTORY_SESSIONS) {
+                    sessions = sessions.slice(0, MAX_HISTORY_SESSIONS);
+                }
+                
+                localStorage.setItem('sixty_three_sessions', JSON.stringify(sessions));
+            } catch (error) {
+                console.error('保存历史记录失败:', error);
+            }
+        }
+
+        // 保存执行流程到本地存储（兼容旧逻辑）
+        function saveFlowToStorage() {
+            saveSessionsToStorage();
+        }
+
+        // 添加 session 历史记录项到侧边栏
+        function addSessionHistoryItem(session) {
+            const historyTab = document.getElementById('historyTab');
+            const emptyHint = historyTab.querySelector('.history-empty-hint');
+            if (emptyHint) emptyHint.remove();
+
+            const firstMsg = session.messages && session.messages.length > 0 ? session.messages[0] : null;
+            const title = firstMsg ? firstMsg.question : '空对话';
+            const roundCount = session.messages ? session.messages.length : 0;
+
+            const item = document.createElement('div');
+            item.className = 'conv-item';
+            item.dataset.sessionId = session.sessionId;
+            item.innerHTML = `
+                <div class="conv-item-content">
+                    <div class="conv-item-question">👤 ${title}</div>
+                    <div class="conv-item-path" style="font-size:11px;color:var(--text-secondary);">${roundCount} 轮对话</div>
+                </div>
+                <button class="conv-item-delete" onclick="deleteHistoryItem(event, this, '${session.sessionId}')">🗑️</button>
+            `;
+            item.querySelector('.conv-item-content').addEventListener('click', function() {
+                loadSessionConversation(session.sessionId);
+            });
+            historyTab.insertBefore(item, historyTab.firstChild);
+        }
+
+        // 更新侧边栏中当前 session 的显示
+        function updateCurrentSessionInSidebar() {
+            const historyTab = document.getElementById('historyTab');
+            const existingItem = historyTab.querySelector(`.conv-item[data-session-id="${currentSessionId}"]`);
+            
+            if (existingItem) {
+                const firstMsg = currentSessionMessages.length > 0 ? currentSessionMessages[0] : null;
+                const title = firstMsg ? firstMsg.question : '空对话';
+                
+                existingItem.querySelector('.conv-item-question').textContent = '👤 ' + title;
+                const pathEl = existingItem.querySelector('.conv-item-path');
+                if (pathEl) pathEl.textContent = currentSessionMessages.length + ' 轮对话';
+            } else {
+                const sessionData = {
+                    sessionId: currentSessionId,
+                    messages: currentSessionMessages,
+                    flowSteps: currentFlowSteps,
+                    updatedAt: new Date().toISOString()
+                };
+                addSessionHistoryItem(sessionData);
+            }
+        }
+
+        // Auto-resize textarea
+        const chatInput = document.getElementById('chatInput');
+        chatInput.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+        });
+
+        function handleKeyDown(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        }
+
+        function sendExample(text) {
+            chatInput.value = text;
+            sendMessage();
+        }
+
+        function switchTab(tab) {
+            document.querySelectorAll('.sidebar-tab').forEach(t => t.classList.remove('active'));
+            document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
+            document.getElementById('flowTab').style.display = tab === 'flow' ? '' : 'none';
+            document.getElementById('historyTab').style.display = tab === 'history' ? '' : 'none';
+        }
+
+        function hideWelcome() {
+            const ws = document.getElementById('welcomeScreen');
+            if (ws) ws.remove();
+        }
+
+        function addMessage(role, content) {
+            hideWelcome();
+            const container = document.getElementById('chatMessages');
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `message ${role}`;
+
+            const avatar = document.createElement('div');
+            avatar.className = 'message-avatar';
+            avatar.textContent = role === 'user' ? '👤' : '🤖';
+
+            const bubble = document.createElement('div');
+            bubble.className = 'message-bubble';
+
+            let confirmInfo = null;
+            if (role === 'assistant') {
+                if (pendingCommandConfirm) {
+                    confirmInfo = pendingCommandConfirm;
+                    pendingCommandConfirm = null;
+                } else if (content.includes('[COMMAND_CONFIRM_REQUIRED]')) {
+                    const confirmMatch = content.match(/\[COMMAND_CONFIRM_REQUIRED\]\ncommand=(.*?)\ntimeout=(.*?)\nworking_dir=(.*?)\n\[\/COMMAND_CONFIRM_REQUIRED\]/);
+                    if (confirmMatch) {
+                        confirmInfo = {
+                            command: confirmMatch[1],
+                            timeout: confirmMatch[2],
+                            working_dir: confirmMatch[3]
+                        };
+                    }
+                }
+            }
+
+            if (confirmInfo) {
+                const afterConfirm = content.includes('[/COMMAND_CONFIRM_REQUIRED]') 
+                    ? content.split('[/COMMAND_CONFIRM_REQUIRED]').pop().trim() 
+                    : content;
+                
+                let html = '';
+                if (afterConfirm) {
+                    html += marked.parse(afterConfirm);
+                }
+                html += `
+                    <div class="command-confirm-card">
+                        <div class="command-confirm-header">⚠️ 命令执行确认</div>
+                        <div class="command-confirm-cmd">${escapeHtml(confirmInfo.command)}</div>
+                        <div class="command-confirm-meta">📁 ${escapeHtml(confirmInfo.working_dir)} | ⏱️ 超时: ${confirmInfo.timeout}s</div>
+                        <div class="command-confirm-actions">
+                            <button class="confirm-btn confirm-ok" onclick="confirmRunCommand(this, '${escapeAttr(confirmInfo.command)}', '${confirmInfo.timeout}', '${escapeAttr(confirmInfo.working_dir)}')">✅ 确认执行</button>
+                            <button class="confirm-btn confirm-cancel" onclick="cancelRunCommand(this)">❌ 取消</button>
+                        </div>
+                    </div>
+                `;
+                bubble.innerHTML = html;
+            } else {
+                bubble.innerHTML = marked.parse(content);
+            }
+
+            msgDiv.appendChild(avatar);
+            msgDiv.appendChild(bubble);
+            container.appendChild(msgDiv);
+            container.scrollTop = container.scrollHeight;
+            return bubble;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function escapeAttr(text) {
+            return text.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
+        }
+
+        function confirmRunCommand(btn, command, timeout, workDir) {
+            const card = btn.closest('.command-confirm-card');
+            card.innerHTML = '<div style="color:var(--accent-green);font-weight:600;">✅ 已确认，正在执行命令...</div>';
+            const chatInput = document.getElementById('chatInput');
+            chatInput.value = `确认执行命令：${command}`;
+            sendMessage();
+        }
+
+        function cancelRunCommand(btn) {
+            const card = btn.closest('.command-confirm-card');
+            card.innerHTML = '<div style="color:var(--accent-red);font-weight:600;">❌ 已取消执行</div>';
+            const chatInput = document.getElementById('chatInput');
+            chatInput.value = '取消执行该命令';
+            sendMessage();
+        }
+
+        function addTypingIndicator() {
+            hideWelcome();
+            const container = document.getElementById('chatMessages');
+            const msgDiv = document.createElement('div');
+            msgDiv.className = 'message assistant';
+            msgDiv.id = 'typingIndicator';
+
+            const avatar = document.createElement('div');
+            avatar.className = 'message-avatar';
+            avatar.textContent = '🤖';
+
+            const bubble = document.createElement('div');
+            bubble.className = 'message-bubble typing-indicator';
+            bubble.innerHTML = '<span></span><span></span><span></span>';
+
+            msgDiv.appendChild(avatar);
+            msgDiv.appendChild(bubble);
+            container.appendChild(msgDiv);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function removeTypingIndicator() {
+            const el = document.getElementById('typingIndicator');
+            if (el) el.remove();
+        }
+
+        function setActiveAgent(nodeName) {
+            document.querySelectorAll('.agent-node').forEach(n => {
+                n.classList.remove('active', 'completed');
+            });
+            document.querySelectorAll('.flow-arrow').forEach(a => {
+                a.classList.remove('active');
+            });
+
+            const node = document.getElementById(`node-${nodeName}`);
+            if (node) {
+                node.classList.add('active');
+            }
+
+            if (nodeName !== 'supervisor') {
+                const arrow = document.getElementById('arrow-1');
+                if (arrow) arrow.classList.add('active');
+            }
+        }
+
+        function markAgentCompleted(nodeName) {
+            const node = document.getElementById(`node-${nodeName}`);
+            if (node) {
+                node.classList.remove('active');
+                node.classList.add('completed');
+            }
+        }
+
+        function resetAgentFlow() {
+            document.querySelectorAll('.agent-node').forEach(n => {
+                n.classList.remove('active', 'completed');
+            });
+            document.querySelectorAll('.flow-arrow').forEach(a => {
+                a.classList.remove('active');
+            });
+            
+            // 清空当前执行流程
+            currentFlowSteps = [];
+        }
+
+        function addExecStep(step) {
+            const flowTab = document.getElementById('flowTab');
+            if (flowTab.querySelector('div[style]')) {
+                flowTab.innerHTML = '';
+            }
+
+            const stepDiv = document.createElement('div');
+            stepDiv.className = `exec-step ${step.node_name} running`;
+            stepDiv.id = `exec-step-${step.step_id}`;
+
+            let toolsHtml = '';
+            if (step.tools_used && step.tools_used.length > 0) {
+                toolsHtml = `<div class="exec-step-tools" id="exec-tools-${step.step_id}">🔧 ${step.tools_used.join(', ')}</div>`;
+            }
+
+            let instructionHtml = '';
+            if (step.instruction) {
+                instructionHtml = `<div class="exec-step-instruction">📋 ${step.instruction}</div>`;
+            }
+
+            stepDiv.innerHTML = `
+                <div class="exec-step-header">
+                    <span class="exec-step-name">${step.node_name}</span>
+                    <span class="exec-step-time">${step.timestamp}</span>
+                </div>
+                ${toolsHtml}
+                ${instructionHtml}
+                <div class="exec-step-output" id="exec-output-${step.step_id}">执行中...</div>
+            `;
+
+            flowTab.appendChild(stepDiv);
+            document.getElementById('sidebarContent').scrollTop = 99999;
+            
+            currentFlowSteps.push(step);
+        }
+
+        let toolCallCounter = 0;
+
+        function addToolToStep(stepId, toolName) {
+            let toolsDiv = document.getElementById(`exec-tools-${stepId}`);
+            if (!toolsDiv) {
+                const stepEl = document.getElementById(`exec-step-${stepId}`);
+                if (!stepEl) return;
+                toolsDiv = document.createElement('div');
+                toolsDiv.className = 'exec-step-tools';
+                toolsDiv.id = `exec-tools-${stepId}`;
+                const outputEl = stepEl.querySelector('.exec-step-output');
+                if (outputEl) stepEl.insertBefore(toolsDiv, outputEl);
+            }
+            const callIdx = toolCallCounter++;
+            const toolItem = document.createElement('span');
+            toolItem.className = 'exec-step-tool-item running';
+            toolItem.id = `tool-${stepId}-${callIdx}`;
+            toolItem.dataset.toolName = toolName;
+            toolItem.textContent = `⚡ ${toolName}`;
+            toolsDiv.appendChild(toolItem);
+            document.getElementById('sidebarContent').scrollTop = 99999;
+        }
+
+        function markToolCompleted(stepId, toolName) {
+            const toolsDiv = document.getElementById(`exec-tools-${stepId}`);
+            if (!toolsDiv) return;
+            const items = toolsDiv.querySelectorAll('.exec-step-tool-item.running');
+            for (const item of items) {
+                if (item.dataset.toolName === toolName) {
+                    item.className = 'exec-step-tool-item completed';
+                    item.textContent = `✅ ${toolName}`;
+                    break;
+                }
+            }
+        }
+
+        function updateExecStep(stepId, output) {
+            const outputEl = document.getElementById(`exec-output-${stepId}`);
+            const stepEl = document.getElementById(`exec-step-${stepId}`);
+            if (outputEl) {
+                outputEl.textContent = output.length > 200 ? output.substring(0, 200) + '...' : output;
+            }
+            if (stepEl) {
+                stepEl.classList.remove('running');
+            }
+            
+            // 更新保存的执行步骤
+            const stepIndex = currentFlowSteps.findIndex(step => step.step_id === stepId);
+            if (stepIndex !== -1) {
+                currentFlowSteps[stepIndex].output = output;
+            }
+        }
+
+        function updateDownloadProgress(progress, speed, eta, filename) {
+            const flowTab = document.getElementById('flowTab');
+            const lastStep = flowTab.lastElementChild;
+            if (lastStep && lastStep.classList.contains('exec-step')) {
+                const outputEl = lastStep.querySelector('.exec-step-output');
+                if (outputEl) {
+                    let progressHtml = '';
+                    if (progress >= 100) {
+                        progressHtml = `<div class="download-progress-complete">✅ 下载完成</div>`;
+                    } else {
+                        progressHtml = `
+                            <div class="download-progress-container">
+                                <div class="download-progress-bar">
+                                    <div class="download-progress-fill" style="width: ${progress}%"></div>
+                                </div>
+                                <div class="download-progress-info">
+                                    <span>${progress.toFixed(1)}%</span>
+                                    ${speed ? `<span>${speed}</span>` : ''}
+                                    ${eta ? `<span>剩余: ${eta}</span>` : ''}
+                                </div>
+                            </div>
+                        `;
+                    }
+                    if (filename) {
+                        progressHtml += `<div class="download-filename">📁 ${filename}</div>`;
+                    }
+                    outputEl.innerHTML = progressHtml;
+                }
+            }
+        }
+
+        function showDownloadError(error) {
+            const flowTab = document.getElementById('flowTab');
+            const lastStep = flowTab.lastElementChild;
+            if (lastStep && lastStep.classList.contains('exec-step')) {
+                const outputEl = lastStep.querySelector('.exec-step-output');
+                if (outputEl) {
+                    outputEl.innerHTML = `<div class="download-error">❌ 下载失败: ${error}</div>`;
+                }
+            }
+        }
+
+        function addToHistory(question, answer, agentPath) {
+            currentSessionMessages.push({
+                question: question,
+                answer: answer,
+                agentPath: agentPath,
+                timestamp: new Date().toISOString()
+            });
+            updateCurrentSessionInSidebar();
+            saveSessionsToStorage();
+        }
+
+        // 加载整个 session 的对话
+        function loadSessionConversation(sessionId) {
+            try {
+                const sessionsJson = localStorage.getItem('sixty_three_sessions');
+                if (!sessionsJson) return;
+                const sessions = JSON.parse(sessionsJson);
+                const session = sessions.find(s => s.sessionId === sessionId);
+                if (!session) return;
+
+                // 清除当前聊天界面
+                const chatMessages = document.getElementById('chatMessages');
+                chatMessages.innerHTML = '';
+                hideWelcome();
+
+                // 更新当前会话ID
+                currentSessionId = sessionId;
+
+                // 加载该 session 的所有对话
+                currentSessionMessages = session.messages || [];
+                currentSessionMessages.forEach(msg => {
+                    if (msg.question) addMessage('user', msg.question);
+                    if (msg.answer) addMessage('assistant', msg.answer);
+                });
+
+                // 重置执行流程
+                resetAgentFlow();
+                document.getElementById('flowTab').innerHTML = '';
+
+                // 加载执行流程
+                currentFlowSteps = session.flowSteps || [];
+                const flowTab = document.getElementById('flowTab');
+                flowTab.innerHTML = '';
+                currentFlowSteps.forEach(step => {
+                    const stepDiv = document.createElement('div');
+                    stepDiv.className = `exec-step ${step.node_name}`;
+                    stepDiv.id = `exec-step-${step.step_id}`;
+
+                    let toolsHtml = '';
+                    if (step.tools_used && step.tools_used.length > 0) {
+                        toolsHtml = `<div class="exec-step-tools">🔧 ${step.tools_used.join(', ')}</div>`;
+                    }
+
+                    let instructionHtml = '';
+                    if (step.instruction) {
+                        instructionHtml = `<div class="exec-step-instruction">📋 ${step.instruction}</div>`;
+                    }
+
+                    stepDiv.innerHTML = `
+                        <div class="exec-step-header">
+                            <span class="exec-step-name">${step.node_name}</span>
+                            <span class="exec-step-time">${step.timestamp}</span>
+                        </div>
+                        ${toolsHtml}
+                        ${instructionHtml}
+                        <div class="exec-step-output">${step.output || '执行中...'}</div>
+                    `;
+                    flowTab.appendChild(stepDiv);
+                });
+
+                // 切换到流程界面
+                switchTab('flow');
+
+                // 聚焦输入框
+                chatInput.focus();
+            } catch (error) {
+                console.error('加载历史对话失败:', error);
+            }
+        }
+
+        // 删除历史记录项
+        function deleteHistoryItem(event, deleteBtn, sessionId) {
+            event.stopPropagation();
+            
+            if (!confirm('确定要删除这条历史记录吗？')) {
+                return;
+            }
+            
+            const historyItem = deleteBtn.closest('.conv-item');
+            if (historyItem) {
+                historyItem.remove();
+            }
+
+            fetch(`/api/history/${sessionId}?user_id=web_user`, { method: 'DELETE' }).catch(() => {});
+            
+            try {
+                const sessionsJson = localStorage.getItem('sixty_three_sessions');
+                if (sessionsJson) {
+                    let sessions = JSON.parse(sessionsJson);
+                    sessions = sessions.filter(s => s.sessionId !== sessionId);
+                    localStorage.setItem('sixty_three_sessions', JSON.stringify(sessions));
+                }
+            } catch (error) {
+                console.error('删除历史记录失败:', error);
+            }
+            
+            const historyTab = document.getElementById('historyTab');
+            if (historyTab.querySelectorAll('.conv-item').length === 0) {
+                historyTab.innerHTML = '<div class="history-empty-hint" style="text-align:center;color:var(--text-secondary);padding:40px 0;font-size:13px;">暂无对话记录</div>';
+            }
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('chatInput');
+            const text = input.value.trim();
+            if (!text || isProcessing) return;
+
+            isProcessing = true;
+            pendingCommandConfirm = null;
+            input.value = '';
+            input.style.height = 'auto';
+            document.getElementById('sendBtn').disabled = true;
+
+            addMessage('user', text);
+            addTypingIndicator();
+            resetAgentFlow();
+            toolCallCounter = 0;
+            document.getElementById('flowTab').innerHTML = '';
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: text,
+                        user_id: 'web_user',
+                        session_id: currentSessionId
+                    })
+                });
+
+                if (!response.ok) throw new Error('Request failed');
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let fullResponse = '';
+                let agentPath = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
+
+                    for (const line of lines) {
+                        if (!line.startsWith('data: ')) continue;
+                        const data = line.slice(6).trim();
+                        if (data === '[DONE]') continue;
+
+                        try {
+                            const event = JSON.parse(data);
+
+                            if (event.type === 'agent_start') {
+                                setActiveAgent(event.node);
+                                addExecStep({
+                                    step_id: event.step_id,
+                                    node_name: event.node,
+                                    timestamp: event.timestamp,
+                                    tools_used: [],
+                                    instruction: event.instruction || ''
+                                });
+                            } else if (event.type === 'agent_end') {
+                                markAgentCompleted(event.node);
+                                updateExecStep(event.step_id, event.output || '');
+                                if (event.tools_used) {
+                                    const stepEl = document.getElementById(`exec-step-${event.step_id}`);
+                                    if (stepEl && event.tools_used.length > 0) {
+                                        let toolsDiv = document.getElementById(`exec-tools-${event.step_id}`);
+                                        if (!toolsDiv) {
+                                            toolsDiv = document.createElement('div');
+                                            toolsDiv.className = 'exec-step-tools';
+                                            toolsDiv.id = `exec-tools-${event.step_id}`;
+                                            const outputEl = stepEl.querySelector('.exec-step-output');
+                                            if (outputEl) stepEl.insertBefore(toolsDiv, outputEl);
+                                        }
+                                    }
+                                }
+                            } else if (event.type === 'tool_start') {
+                                addToolToStep(event.step_id, event.tool_name);
+                            } else if (event.type === 'tool_end') {
+                                markToolCompleted(event.step_id, event.tool_name);
+                            } else if (event.type === 'download_progress') {
+                                updateDownloadProgress(event.progress, event.speed, event.eta, event.filename);
+                            } else if (event.type === 'download_error') {
+                                showDownloadError(event.error);
+                            } else if (event.type === 'command_confirm_request') {
+                                pendingCommandConfirm = {
+                                    command: event.command,
+                                    timeout: event.timeout,
+                                    working_dir: event.working_dir
+                                };
+                            } else if (event.type === 'response') {
+                                fullResponse = event.content;
+                                agentPath = event.agent_tool_path || '';
+                            }
+                        } catch (e) {
+                            // skip malformed JSON
+                        }
+                    }
+                }
+
+                removeTypingIndicator();
+                addMessage('assistant', fullResponse);
+                addToHistory(text, fullResponse, agentPath);
+                saveFlowToStorage();
+                loadHistoryFromBackend();
+
+            } catch (error) {
+                removeTypingIndicator();
+                addMessage('assistant', '抱歉，发生了错误：' + error.message);
+                addToHistory(text, '抱歉，发生了错误：' + error.message, '');
+                saveFlowToStorage();
+                loadHistoryFromBackend();
+            }
+
+            isProcessing = false;
+            document.getElementById('sendBtn').disabled = false;
+            chatInput.focus();
+        }
+
+        // 新建对话
+        function newChat() {
+            currentSessionId = 'session_' + Date.now();
+            currentSessionMessages = [];
+            currentFlowSteps = [];
+            
+            const chatMessages = document.getElementById('chatMessages');
+            chatMessages.innerHTML = '';
+            
+            resetAgentFlow();
+            document.getElementById('flowTab').innerHTML = '<div style="text-align:center;color:var(--text-secondary);padding:40px 0;font-size:13px;">发送消息后查看执行流程</div>';
+            
+            chatMessages.innerHTML = `
+                <div class="welcome-screen" id="welcomeScreen">
+                    <div class="welcome-icon">🤖</div>
+                    <div class="welcome-title">Sixty-Three</div>
+                    <div class="welcome-subtitle">多Agent智能助手，支持知识检索、联网搜索、提醒管理、城市信息查询</div>
+                    <div class="welcome-examples">
+                        <button class="example-btn" onclick="sendExample('北京今天天气怎么样？')">🌤 天气查询</button>
+                        <button class="example-btn" onclick="sendExample('iphone17 promax 1TB 价格')">📱 价格查询</button>
+                        <button class="example-btn" onclick="sendExample('明天下午3点提醒我开会')">⏰ 设置提醒</button>
+                        <button class="example-btn" onclick="sendExample('你好，你是谁？')">💬 闲聊</button>
+                    </div>
+                </div>
+            `;
+            
+            chatInput.focus();
+        }
+
+        // 页面加载完成后初始化历史记录
+        window.onload = function() {
+            initHistory();
+        };
+    </script>
+</body>
+</html>
