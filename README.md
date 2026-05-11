@@ -263,7 +263,6 @@ uvicorn backend.app:app --host 0.0.0.0 --port 8000 --reload
 
 ## 环境变量说明
 
-> ⚠️ **重要**：`.env` 文件包含敏感信息，已在 `.gitignore` 中排除，**切勿提交到公开仓库**
 
 ### 必需配置
 
